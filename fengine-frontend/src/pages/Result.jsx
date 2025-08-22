@@ -113,7 +113,7 @@ export default function Result() {
                 console.error("Invalid FEN string:", error);
                 setNotationError(`Invalid FEN: ${error.message}`);
             }
-        }, 500); // 500ms debounce
+        }, FEN_DEBOUNCE_DELAY_MS); // debounce
 
         // Clean up the timer
         return () => clearTimeout(debounceTimer);
