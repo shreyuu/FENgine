@@ -97,7 +97,10 @@ export default function Result() {
                     setGame(newGame);
 
                     // Update the editable FEN with the complete version
-                    setEditableFen(newGame.fen());
+                    // Update the editable FEN with the complete version, only if it differs from the current value
+                    if (newGame.fen() !== editableFen) {
+                        setEditableFen(newGame.fen());
+                    }
                     setNotationError('');
                 } else {
                     // FEN seems complete, try to load it directly
