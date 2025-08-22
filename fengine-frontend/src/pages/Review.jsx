@@ -5,8 +5,8 @@ export default function Review() {
     const { state } = useLocation();
     const navigate = useNavigate();
     const canvasRef = useRef();
-    // Remove unused state or prefix with underscore
     const [_image, setImage] = useState(null);
+    const [corrections, _setCorrections] = useState({});
 
     useEffect(() => {
         if (!state?.file) return navigate('/upload');
@@ -23,8 +23,13 @@ export default function Review() {
     }, [state, navigate]);
 
     const handleConfirm = () => {
-        // TODO: collect any manual corrections
-        navigate('/result', { state: { /* corrections + image */ } });
+        // Pass both the file and any corrections to the result page
+        navigate('/result', {
+            state: {
+                file: state.file,
+                corrections: corrections
+            }
+        });
     };
 
     return (
