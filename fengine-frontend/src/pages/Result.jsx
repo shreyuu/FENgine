@@ -126,7 +126,6 @@ export default function Result() {
             newGame.load(fen);
 
             // Extract position info from FEN
-            const [_position, _activeColor, _castling, _enPassant, _halfMove, _fullMove] = fen.split(' ');
 
             // Build a simple PGN
             return [
