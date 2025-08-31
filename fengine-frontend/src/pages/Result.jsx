@@ -97,7 +97,10 @@ export default function Result() {
                     setGame(newGame);
 
                     // Update the editable FEN with the complete version
-                    setEditableFen(newGame.fen());
+                    // Update the editable FEN with the complete version, only if it differs from the current value
+                    if (newGame.fen() !== editableFen) {
+                        setEditableFen(newGame.fen());
+                    }
                     setNotationError('');
                 } else {
                     // FEN seems complete, try to load it directly
@@ -113,7 +116,7 @@ export default function Result() {
                 console.error("Invalid FEN string:", error);
                 setNotationError(`Invalid FEN: ${error.message}`);
             }
-        }, 500); // 500ms debounce
+        }, FEN_DEBOUNCE_DELAY_MS); // debounce
 
         // Clean up the timer
         return () => clearTimeout(debounceTimer);
@@ -126,7 +129,6 @@ export default function Result() {
             newGame.load(fen);
 
             // Extract position info from FEN
-            const [_position, _activeColor, _castling, _enPassant, _halfMove, _fullMove] = fen.split(' ');
 
             // Build a simple PGN
             return [
