@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from processing import detect_and_warp, classify_cells, generate_notation
+from processing import classify_cells, generate_notation
 import numpy as np
 import cv2
 import traceback
@@ -15,6 +15,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Define the detect_and_warp function here if it's not in processing.py
+def detect_and_warp(image):
+    # Implementation as shown in Option 1
+    pass
 
 
 @app.post("/api/ocr")
