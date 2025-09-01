@@ -44,66 +44,96 @@ def process_image(image_data, corrections=None):
     return board_labels
 
 
+def classify_cells(warped_board):
+    """
+    Divides a warped chessboard image into 64 cells and classifies each cell
+    Returns an 8x8 array of piece labels (integers)
+    """
+    # Get dimensions of the warped board
+    height, width = warped_board.shape[:2]
+
+    # Calculate cell dimensions
+    cell_height = height // 8
+    cell_width = width // 8
+
+    # Initialize empty 8x8 board for labels
+    board_labels = np.zeros((8, 8), dtype=int)
+
+    # For each cell on the board
+    for row in range(8):
+        for col in range(8):
+            # Extract the cell image
+            y_start = row * cell_height
+            y_end = (row + 1) * cell_height
+            x_start = col * cell_width
+            x_end = (col + 1) * cell_width
+
+            cell = warped_board[y_start:y_end, x_start:x_end]
+
+            # Preprocess cell for the model
+            cell = cv2.resize(cell, (64, 64))  # Resize to model input size
+            cell = cell / 255.0  # Normalize
+
+            # Classify the cell
+            prediction = model.predict(np.expand_dims(cell, axis=0))
+            piece_label = np.argmax(prediction)
+
+            # Store the label
+            board_labels[row][col] = piece_label
+
+    return board_labels
+
+
 def detect_and_warp(image):
-    """
-    Detects a chessboard in an image and returns a warped (top-down) view.
-
-    Args:
-        image: Input image containing a chessboard
-
-    Returns:
-        Warped image of the chessboard from a top-down perspective
-    """
-    # Convert to grayscale
+    # Find the chessboard in the image and warp it to a square
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Use adaptive thresholding to create a binary image
     thresh = cv2.adaptiveThreshold(
-        blur,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        11,
-        2,
+        blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
     )
 
-    # Find contours
+    # Find contours in the binary image
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Find the largest contour by area
-    largest_contour = max(contours, key=cv2.contourArea)
+    # Find the largest contour (which should be the chessboard)
+    if contours:
+        largest_contour = max(contours, key=cv2.contourArea)
 
-    # Approximate the contour to a polygon
-    epsilon = 0.02 * cv2.arcLength(largest_contour, True)
-    approx = cv2.approxPolyDP(largest_contour, epsilon, True)
+        # Approximate the contour to a polygon
+        epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+        approx = cv2.approxPolyDP(largest_contour, epsilon, True)
 
-    # If we have a quadrilateral, apply perspective transform
-    if len(approx) == 4:
-        # Order points correctly
-        pts = np.array([pt[0] for pt in approx], dtype=np.float32)
-        rect = order_points(pts)
+        # If we have a quadrilateral (4 corners), we can warp
+        if len(approx) == 4:
+            # Order the points [top-left, top-right, bottom-right, bottom-left]
+            ordered_points = order_points(approx.reshape(4, 2))
 
-        # Determine width and height of the warped image
-        width = 800  # Example size
-        height = 800
+            # Get width and height of the warped image
+            width = 800  # Desired width of the warped image
+            height = 800  # Desired height of the warped image
 
-        # Define destination points for transform
-        dst = np.array(
-            [
-                [0, 0],
-                [width - 1, 0],
-                [width - 1, height - 1],
-                [0, height - 1],
-            ],
-            dtype=np.float32,
-        )
+            # Define destination points for the perspective transform
+            dst = np.array(
+                [
+                    [0, 0],
+                    [width - 1, 0],
+                    [width - 1, height - 1],
+                    [0, height - 1],
+                ],
+                dtype=np.float32,
+            )
 
-        # Calculate perspective transform matrix
-        M = cv2.getPerspectiveTransform(rect, dst)
+            # Compute the perspective transform matrix
+            M = cv2.getPerspectiveTransform(ordered_points.astype(np.float32), dst)
 
-        # Apply perspective transform
-        warped = cv2.warpPerspective(image, M, (width, height))
-        return warped
+            # Warp the image
+            warped = cv2.warpPerspective(image, M, (width, height))
 
+            return warped
+
+    # If we couldn't find a valid contour, return the original image
     return image  # Return original if no suitable contour found
 
 
@@ -111,14 +141,17 @@ def order_points(pts):
     """
     Orders points in [top-left, top-right, bottom-right, bottom-left] order
     """
+    # Initialize an array of ordered points
     rect = np.zeros((4, 2), dtype=np.float32)
 
-    # Top-left has smallest sum, bottom-right has largest sum
+    # The top-left point will have the smallest sum of coordinates
+    # The bottom-right point will have the largest sum
     s = pts.sum(axis=1)
     rect[0] = pts[np.argmin(s)]
     rect[2] = pts[np.argmax(s)]
 
-    # Top-right has smallest difference, bottom-left has largest difference
+    # The top-right point will have the smallest difference
+    # The bottom-left will have the largest difference
     diff = np.diff(pts, axis=1)
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
@@ -191,7 +224,7 @@ def generate_notation(board_labels, corrections=None):
     pgn = generate_pgn_from_fen(fen)
 
     print(f"Generated FEN: {fen}")
-    return {"fen": fen, "pgn": pgn}
+    return fen, pgn
 
 
 def generate_pgn_from_fen(fen):
