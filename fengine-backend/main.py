@@ -35,35 +35,51 @@ async def process_image(file: UploadFile = File(...), corrections: str = None):
             raise HTTPException(status_code=400, detail="Could not decode image")
 
         # Process the image
-        warped = detect_and_warp(img)
-        board_labels = classify_cells(warped)
+        try:
+            warped = detect_and_warp(img)
 
-        # Debug print the board
-        print("Detected board before corrections:")
-        for row in board_labels:
-            print(row)
+            # Ensure warped is not None
+            if warped is None:
+                print("Warning: detect_and_warp returned None. Using original image.")
+                warped = cv2.resize(img, (800, 800))
 
-        # Apply any corrections if provided
-        if corrections:
-            import json
+            # Save the warped image for debugging (optional)
+            # cv2.imwrite("debug_warped.jpg", warped)
 
-            corrections_dict = json.loads(corrections)
-            for position, piece in corrections_dict.items():
-                # Expecting positions like "a1", "h8", etc.
-                col = ord(position[0]) - ord("a")
-                row = 8 - int(position[1])
-                if 0 <= row < 8 and 0 <= col < 8:
-                    board_labels[row][col] = piece
+            board_labels = classify_cells(warped)
 
-            # Debug print the board after corrections
-            print("Board after corrections:")
+            # Debug print the board
+            print("Detected board before corrections:")
             for row in board_labels:
                 print(row)
 
-        # Generate FEN and PGN
-        fen, pgn = generate_notation(board_labels)
+            # Apply any corrections if provided
+            if corrections:
+                import json
 
-        return {"fen": fen, "pgn": pgn}
+                corrections_dict = json.loads(corrections)
+                for position, piece in corrections_dict.items():
+                    # Expecting positions like "a1", "h8", etc.
+                    col = ord(position[0]) - ord("a")
+                    row = 8 - int(position[1])
+                    if 0 <= row < 8 and 0 <= col < 8:
+                        board_labels[row][col] = piece
+
+                # Debug print the board after corrections
+                print("Board after corrections:")
+                for row in board_labels:
+                    print(row)
+
+            # Generate FEN and PGN
+            fen, pgn = generate_notation(board_labels)
+
+            return {"fen": fen, "pgn": pgn}
+        except Exception as e:
+            print(f"Error during image processing: {str(e)}")
+            print(traceback.format_exc())
+            raise HTTPException(
+                status_code=500, detail=f"Image processing error: {str(e)}"
+            )
     except Exception as e:
         # Log the full traceback
         error_details = traceback.format_exc()

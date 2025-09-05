@@ -72,10 +72,23 @@ def classify_cells(warped_board):
 
             # Preprocess cell for the model
             cell = cv2.resize(cell, (64, 64))  # Resize to model input size
-            cell = cell / 255.0  # Normalize
+
+            # Convert to grayscale (this is the key fix)
+            cell_gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+
+            # Normalize
+            cell_gray = cell_gray / 255.0
+
+            # Reshape to match model's expected input shape (add channel dimension)
+            cell_input = np.expand_dims(cell_gray, axis=-1)  # Shape becomes (64, 64, 1)
+
+            # Add batch dimension
+            cell_input = np.expand_dims(
+                cell_input, axis=0
+            )  # Shape becomes (1, 64, 64, 1)
 
             # Classify the cell
-            prediction = model.predict(np.expand_dims(cell, axis=0))
+            prediction = model.predict(cell_input)
             piece_label = np.argmax(prediction)
 
             # Store the label
@@ -133,8 +146,10 @@ def detect_and_warp(image):
 
             return warped
 
-    # If we couldn't find a valid contour, return the original image
-    return image  # Return original if no suitable contour found
+    # If we reach here, we couldn't find a valid contour or it wasn't a quadrilateral
+    # Resize the original image to 800x800 instead of returning None
+    print("Warning: No valid chessboard contour found. Using the original image.")
+    return cv2.resize(image, (800, 800))
 
 
 def order_points(pts):
@@ -240,3 +255,19 @@ def generate_pgn_from_fen(fen):
 [SetUp "1"]
 
 *"""
+
+
+def check_model_input_shape():
+    """
+    Print the expected input shape for the model to help with debugging
+    """
+    # Get the input shape from the model
+    input_shape = model.layers[0].input_shape
+    print(f"Model expects input shape: {input_shape}")
+
+    # Call this function when your app starts up
+    return input_shape
+
+
+# Add this line near the top of the file after model loading
+input_shape = check_model_input_shape()
