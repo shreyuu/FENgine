@@ -36,6 +36,12 @@ async def process_image(file: UploadFile = File(...), corrections: str = None):
 
         # Process the image
         warped = detect_and_warp(img)
+
+        # Ensure warped is not None
+        if warped is None:
+            print("Warning: detect_and_warp returned None. Using original image.")
+            warped = cv2.resize(img, (800, 800))
+
         board_labels = classify_cells(warped)
 
         # Debug print the board

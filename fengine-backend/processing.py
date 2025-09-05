@@ -133,8 +133,10 @@ def detect_and_warp(image):
 
             return warped
 
-    # If we couldn't find a valid contour, return the original image
-    return image  # Return original if no suitable contour found
+    # If we reach here, we couldn't find a valid contour or it wasn't a quadrilateral
+    # Resize the original image to 800x800 instead of returning None
+    print("Warning: No valid chessboard contour found. Using the original image.")
+    return cv2.resize(image, (800, 800))
 
 
 def order_points(pts):
