@@ -4,6 +4,7 @@ from processing import classify_cells, generate_notation
 import numpy as np
 import cv2
 import traceback
+import time
 
 app = FastAPI()
 
@@ -36,7 +37,9 @@ async def process_image(file: UploadFile = File(...), corrections: str = None):
 
         # Process the image
         try:
+            start_time = time.time()
             warped = detect_and_warp(img)
+            warp_time = time.time() - start_time
 
             # Ensure warped is not None
             if warped is None:
@@ -46,7 +49,12 @@ async def process_image(file: UploadFile = File(...), corrections: str = None):
             # Save the warped image for debugging (optional)
             # cv2.imwrite("debug_warped.jpg", warped)
 
+            start_time = time.time()
             board_labels = classify_cells(warped)
+            classify_time = time.time() - start_time
+
+            print(f"Time to warp: {warp_time:.2f} seconds")
+            print(f"Time to classify: {classify_time:.2f} seconds")
 
             # Debug print the board
             print("Detected board before corrections:")

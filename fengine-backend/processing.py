@@ -88,11 +88,58 @@ def classify_cells(warped_board):
             )  # Shape becomes (1, 64, 64, 1)
 
             # Classify the cell
-            prediction = model.predict(cell_input)
+            prediction = model.predict(cell_input, verbose=0)
             piece_label = np.argmax(prediction)
 
             # Store the label
             board_labels[row][col] = piece_label
+
+    return board_labels
+
+
+def classify_cells_batch(warped_board):
+    # Calculate cell dimensions
+    board_height, board_width = warped_board.shape[:2]
+    cell_height = board_height // 8
+    cell_width = board_width // 8
+
+    # Extract all cells first
+    cells = []
+    for row in range(8):
+        for col in range(8):
+            # Extract the cell image
+            y_start = row * cell_height
+            y_end = (row + 1) * cell_height
+            x_start = col * cell_width
+            x_end = (col + 1) * cell_width
+
+            cell = warped_board[y_start:y_end, x_start:x_end]
+
+            # Preprocess cell for the model
+            cell = cv2.resize(cell, (64, 64))  # Resize to model input size
+
+            # Convert to grayscale (this is the key fix)
+            cell_gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+
+            # Normalize
+            cell_gray = cell_gray / 255.0
+
+            # Reshape to match model's expected input shape (add channel dimension)
+            cell_input = np.expand_dims(cell_gray, axis=-1)  # Shape becomes (64, 64, 1)
+
+            cells.append(cell_input)
+
+    # Batch all cells
+    batch_input = np.vstack(cells)
+
+    # Single prediction call
+    predictions = model.predict(batch_input, verbose=0)
+
+    # Process results
+    board_labels = np.zeros((8, 8), dtype=int)
+    for i, pred in enumerate(predictions):
+        row, col = i // 8, i % 8
+        board_labels[row][col] = np.argmax(pred)
 
     return board_labels
 
