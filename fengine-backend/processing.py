@@ -308,8 +308,8 @@ def check_model_input_shape():
     """
     Print the expected input shape for the model to help with debugging
     """
-    # Get the input shape from the model
-    input_shape = model.layers[0].input_shape
+    # Get the input shape from the model's input layer
+    input_shape = model.input_shape
     print(f"Model expects input shape: {input_shape}")
 
     # Call this function when your app starts up
