@@ -5,16 +5,17 @@ import Result from './pages/Result';
 
 function App() {
   return (
-    <Router>
-      <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100">
+      <h1>FENgine App</h1>
+      <Router>
         <Routes>
           <Route path="/" element={<Navigate to="/upload" replace />} />
           <Route path="/upload" element={<Upload />} />
           <Route path="/review" element={<Review />} />
           <Route path="/result" element={<Result />} />
         </Routes>
-      </div>
-    </Router>
+      </Router>
+    </div>
   );
 }
 
