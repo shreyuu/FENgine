@@ -7,22 +7,22 @@ import chess
 # Load the model
 model = load_model("model/model.h5")
 
-# Updated piece mapping based on your model's output
+# Updated piece mapping - you may need to adjust these based on your model
 PIECE_MAP = {
     0: None,  # Empty square
-    5: None,  # Empty square (your model seems to use 5 for empty)
     1: "P",  # White pawn
     2: "N",  # White knight
     3: "B",  # White bishop
     4: "R",  # White rook
-    6: "Q",  # White queen (if your model uses 6 for white queen)
-    7: "K",  # White king (based on your output)
+    5: None,  # Empty square (alternative)
+    6: "Q",  # White queen
+    7: "K",  # White king
     8: "p",  # Black pawn
     9: "n",  # Black knight
     10: "b",  # Black bishop
     11: "r",  # Black rook
-    12: "k",  # Black king (based on your output)
-    13: "q",  # Black queen (if your model uses 13 for black queen)
+    12: "k",  # Black king
+    13: "q",  # Black queen (if your model uses 13)
 }
 
 
@@ -45,21 +45,13 @@ def process_image(image_data, corrections=None):
 
 
 def classify_cells(warped_board):
-    """
-    Divides a warped chessboard image into 64 cells and classifies each cell
-    Returns an 8x8 array of piece labels (integers)
-    """
-    # Get dimensions of the warped board
-    height, width = warped_board.shape[:2]
-
     # Calculate cell dimensions
-    cell_height = height // 8
-    cell_width = width // 8
+    board_height, board_width = warped_board.shape[:2]
+    cell_height = board_height // 8
+    cell_width = board_width // 8
 
-    # Initialize empty 8x8 board for labels
     board_labels = np.zeros((8, 8), dtype=int)
 
-    # For each cell on the board
     for row in range(8):
         for col in range(8):
             # Extract the cell image
@@ -73,25 +65,34 @@ def classify_cells(warped_board):
             # Preprocess cell for the model
             cell = cv2.resize(cell, (64, 64))  # Resize to model input size
 
-            # Convert to grayscale (this is the key fix)
+            # Convert to grayscale
             cell_gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
 
-            # Normalize
-            cell_gray = cell_gray / 255.0
+            # Apply histogram equalization to improve contrast
+            cell_gray = cv2.equalizeHist(cell_gray)
 
-            # Reshape to match model's expected input shape (add channel dimension)
-            cell_input = np.expand_dims(cell_gray, axis=-1)  # Shape becomes (64, 64, 1)
+            # Normalize to [0, 1]
+            cell_gray = cell_gray.astype(np.float32) / 255.0
 
-            # Add batch dimension
-            cell_input = np.expand_dims(
-                cell_input, axis=0
-            )  # Shape becomes (1, 64, 64, 1)
+            # Reshape to match model's expected input shape
+            cell_input = np.expand_dims(cell_gray, axis=-1)  # Shape: (64, 64, 1)
+            cell_input = np.expand_dims(cell_input, axis=0)  # Shape: (1, 64, 64, 1)
 
             # Classify the cell
             prediction = model.predict(cell_input, verbose=0)
             piece_label = np.argmax(prediction)
+            confidence = np.max(prediction)
 
-            # Store the label
+            # Only accept predictions with high confidence
+            if confidence < 0.6:  # Adjust threshold as needed
+                piece_label = 0  # Treat as empty square
+
+            # Debug: Print predictions for troubleshooting
+            if piece_label != 0 and piece_label != 5:
+                print(
+                    f"Cell ({row}, {col}): predicted {piece_label} with confidence {confidence:.3f}"
+                )
+
             board_labels[row][col] = piece_label
 
     return board_labels
@@ -149,52 +150,79 @@ def detect_and_warp(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Use adaptive thresholding to create a binary image
-    thresh = cv2.adaptiveThreshold(
+    # Try multiple thresholding approaches
+    # Approach 1: Adaptive thresholding
+    thresh1 = cv2.adaptiveThreshold(
         blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
     )
 
-    # Find contours in the binary image
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Approach 2: Otsu's thresholding
+    _, thresh2 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Find the largest contour (which should be the chessboard)
+    # Try both thresholds
+    for thresh in [thresh1, thresh2]:
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if contours:
+            # Sort contours by area and try the largest ones
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+            for contour in contours[:5]:  # Try top 5 largest contours
+                area = cv2.contourArea(contour)
+
+                # Filter by minimum area (adjust based on your image size)
+                if area < 10000:  # Adjust this threshold
+                    continue
+
+                epsilon = 0.02 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+
+                if len(approx) == 4:
+                    # Found a quadrilateral, proceed with perspective transform
+                    pts = approx.reshape(4, 2).astype(np.float32)
+                    ordered_pts = order_points(pts)
+
+                    # Define destination points for 800x800 square
+                    dst = np.array(
+                        [[0, 0], [800, 0], [800, 800], [0, 800]], dtype=np.float32
+                    )
+
+                    # Get perspective transform matrix and warp
+                    matrix = cv2.getPerspectiveTransform(ordered_pts, dst)
+                    warped = cv2.warpPerspective(image, matrix, (800, 800))
+
+                    print(f"Successfully warped board using contour with area: {area}")
+                    return warped
+
+    # If no valid contour found, try edge detection approach
+    edges = cv2.Canny(blur, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
 
-        # Approximate the contour to a polygon
-        epsilon = 0.02 * cv2.arcLength(largest_contour, True)
-        approx = cv2.approxPolyDP(largest_contour, epsilon, True)
+        if area > 5000:  # Lower threshold for edge detection
+            epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+            approx = cv2.approxPolyDP(largest_contour, epsilon, True)
 
-        # If we have a quadrilateral (4 corners), we can warp
-        if len(approx) == 4:
-            # Order the points [top-left, top-right, bottom-right, bottom-left]
-            ordered_points = order_points(approx.reshape(4, 2))
+            if len(approx) >= 4:
+                # Take first 4 points if more than 4
+                pts = approx[:4].reshape(4, 2).astype(np.float32)
+                ordered_pts = order_points(pts)
 
-            # Get width and height of the warped image
-            width = 800  # Desired width of the warped image
-            height = 800  # Desired height of the warped image
+                dst = np.array(
+                    [[0, 0], [800, 0], [800, 800], [0, 800]], dtype=np.float32
+                )
+                matrix = cv2.getPerspectiveTransform(ordered_pts, dst)
+                warped = cv2.warpPerspective(image, matrix, (800, 800))
 
-            # Define destination points for the perspective transform
-            dst = np.array(
-                [
-                    [0, 0],
-                    [width - 1, 0],
-                    [width - 1, height - 1],
-                    [0, height - 1],
-                ],
-                dtype=np.float32,
-            )
+                print(f"Successfully warped board using edges with area: {area}")
+                return warped
 
-            # Compute the perspective transform matrix
-            M = cv2.getPerspectiveTransform(ordered_points.astype(np.float32), dst)
-
-            # Warp the image
-            warped = cv2.warpPerspective(image, M, (width, height))
-
-            return warped
-
-    # If we reach here, we couldn't find a valid contour or it wasn't a quadrilateral
-    # Resize the original image to 800x800 instead of returning None
+    # If we reach here, resize the original image
     print("Warning: No valid chessboard contour found. Using the original image.")
     return cv2.resize(image, (800, 800))
 
@@ -222,66 +250,56 @@ def order_points(pts):
 
 
 def generate_notation(board_labels, corrections=None):
-    # Convert the 8x8 array of piece labels to FEN and PGN notation
-
-    # Apply any corrections if provided
+    # Apply corrections if provided
     if corrections:
         for position, piece in corrections.items():
             file, rank = position[0], int(position[1])
             file_idx = ord(file) - ord("a")
             rank_idx = 8 - rank
-            # Update the board with the corrected piece
             board_labels[rank_idx][file_idx] = piece
-
-    # Print the board for debugging
-    print("Board labels detected:")
-    for row in board_labels:
-        print(row)
 
     # Initialize empty board
     board = chess.Board(fen="8/8/8/8/8/8/8/8 w - - 0 1")
 
-    # Place pieces on the board according to the labels
+    has_white_king = False
+    has_black_king = False
+
+    # Place pieces on the board
     for rank_idx, row in enumerate(board_labels):
         for file_idx, piece_label in enumerate(row):
-            # Skip if empty square (0 or 5 are empty)
             if piece_label == 0 or piece_label == 5:
                 continue
 
-            # Get the chess position (e.g., 'a1', 'h8')
             file = chr(ord("a") + file_idx)
             rank = 8 - rank_idx
             position = f"{file}{rank}"
 
-            # Get the piece from the mapping
             piece = PIECE_MAP.get(piece_label)
 
             if piece:
-                # Set the piece on the board
                 board.set_piece_at(
                     chess.parse_square(position), chess.Piece.from_symbol(piece)
                 )
-            else:
-                # Log warning for debugging but try to interpret based on output pattern
-                print(
-                    f"Warning: Unknown piece label '{piece_label}' at position {position}"
-                )
 
-                # Common patterns from your terminal output:
-                if piece_label == 12:  # Might be black king
-                    board.set_piece_at(
-                        chess.parse_square(position), chess.Piece.from_symbol("k")
-                    )
-                elif piece_label == 2:  # Might be white knight
-                    board.set_piece_at(
-                        chess.parse_square(position), chess.Piece.from_symbol("N")
-                    )
-                elif piece_label == 7:  # Might be white king
-                    board.set_piece_at(
-                        chess.parse_square(position), chess.Piece.from_symbol("K")
-                    )
+                # Track kings
+                if piece == "K":
+                    has_white_king = True
+                elif piece == "k":
+                    has_black_king = True
 
-    # Generate FEN and PGN
+    # If missing kings, add them to safe squares
+    if not has_white_king:
+        # Add white king to e1 if empty
+        if not board.piece_at(chess.E1):
+            board.set_piece_at(chess.E1, chess.Piece.from_symbol("K"))
+            print("Added missing white king to e1")
+
+    if not has_black_king:
+        # Add black king to e8 if empty
+        if not board.piece_at(chess.E8):
+            board.set_piece_at(chess.E8, chess.Piece.from_symbol("k"))
+            print("Added missing black king to e8")
+
     fen = board.fen()
     pgn = generate_pgn_from_fen(fen)
 
