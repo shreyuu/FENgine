@@ -149,52 +149,79 @@ def detect_and_warp(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Use adaptive thresholding to create a binary image
-    thresh = cv2.adaptiveThreshold(
+    # Try multiple thresholding approaches
+    # Approach 1: Adaptive thresholding
+    thresh1 = cv2.adaptiveThreshold(
         blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
     )
 
-    # Find contours in the binary image
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Approach 2: Otsu's thresholding
+    _, thresh2 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # Find the largest contour (which should be the chessboard)
+    # Try both thresholds
+    for thresh in [thresh1, thresh2]:
+        contours, _ = cv2.findContours(
+            thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        if contours:
+            # Sort contours by area and try the largest ones
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+            for contour in contours[:5]:  # Try top 5 largest contours
+                area = cv2.contourArea(contour)
+
+                # Filter by minimum area (adjust based on your image size)
+                if area < 10000:  # Adjust this threshold
+                    continue
+
+                epsilon = 0.02 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+
+                if len(approx) == 4:
+                    # Found a quadrilateral, proceed with perspective transform
+                    pts = approx.reshape(4, 2).astype(np.float32)
+                    ordered_pts = order_points(pts)
+
+                    # Define destination points for 800x800 square
+                    dst = np.array(
+                        [[0, 0], [800, 0], [800, 800], [0, 800]], dtype=np.float32
+                    )
+
+                    # Get perspective transform matrix and warp
+                    matrix = cv2.getPerspectiveTransform(ordered_pts, dst)
+                    warped = cv2.warpPerspective(image, matrix, (800, 800))
+
+                    print(f"Successfully warped board using contour with area: {area}")
+                    return warped
+
+    # If no valid contour found, try edge detection approach
+    edges = cv2.Canny(blur, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     if contours:
         largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
 
-        # Approximate the contour to a polygon
-        epsilon = 0.02 * cv2.arcLength(largest_contour, True)
-        approx = cv2.approxPolyDP(largest_contour, epsilon, True)
+        if area > 5000:  # Lower threshold for edge detection
+            epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+            approx = cv2.approxPolyDP(largest_contour, epsilon, True)
 
-        # If we have a quadrilateral (4 corners), we can warp
-        if len(approx) == 4:
-            # Order the points [top-left, top-right, bottom-right, bottom-left]
-            ordered_points = order_points(approx.reshape(4, 2))
+            if len(approx) >= 4:
+                # Take first 4 points if more than 4
+                pts = approx[:4].reshape(4, 2).astype(np.float32)
+                ordered_pts = order_points(pts)
 
-            # Get width and height of the warped image
-            width = 800  # Desired width of the warped image
-            height = 800  # Desired height of the warped image
+                dst = np.array(
+                    [[0, 0], [800, 0], [800, 800], [0, 800]], dtype=np.float32
+                )
+                matrix = cv2.getPerspectiveTransform(ordered_pts, dst)
+                warped = cv2.warpPerspective(image, matrix, (800, 800))
 
-            # Define destination points for the perspective transform
-            dst = np.array(
-                [
-                    [0, 0],
-                    [width - 1, 0],
-                    [width - 1, height - 1],
-                    [0, height - 1],
-                ],
-                dtype=np.float32,
-            )
+                print(f"Successfully warped board using edges with area: {area}")
+                return warped
 
-            # Compute the perspective transform matrix
-            M = cv2.getPerspectiveTransform(ordered_points.astype(np.float32), dst)
-
-            # Warp the image
-            warped = cv2.warpPerspective(image, M, (width, height))
-
-            return warped
-
-    # If we reach here, we couldn't find a valid contour or it wasn't a quadrilateral
-    # Resize the original image to 800x800 instead of returning None
+    # If we reach here, resize the original image
     print("Warning: No valid chessboard contour found. Using the original image.")
     return cv2.resize(image, (800, 800))
 
