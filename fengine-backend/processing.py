@@ -418,8 +418,8 @@ def process_chess_board(image):
         board_labels = classify_cells(warped)
     except Exception as e:
         print(f"Error in model classification: {e}")
-        print("Falling back to template matching...")
-        board_labels = classify_cells_template_matching(warped)
+        print("Falling back to batch classification...")
+        board_labels = classify_cells_batch(warped)
 
     classify_time = time.time()
     print(f"Time to classify: {classify_time - warp_time:.2f} seconds")
