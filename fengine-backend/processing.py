@@ -3,6 +3,7 @@ import cv2
 import tensorflow as tf
 from keras.models import load_model
 import chess
+import time
 
 # Load the model
 model = load_model("model/model.h5")
@@ -45,16 +46,17 @@ def process_image(image_data, corrections=None):
 
 
 def classify_cells(warped_board):
-    # Calculate cell dimensions
     board_height, board_width = warped_board.shape[:2]
     cell_height = board_height // 8
     cell_width = board_width // 8
 
     board_labels = np.zeros((8, 8), dtype=int)
 
+    print(f"Board shape: {warped_board.shape}")
+    print(f"Cell dimensions: {cell_width}x{cell_height}")
+
     for row in range(8):
         for col in range(8):
-            # Extract the cell image
             y_start = row * cell_height
             y_end = (row + 1) * cell_height
             x_start = col * cell_width
@@ -62,38 +64,67 @@ def classify_cells(warped_board):
 
             cell = warped_board[y_start:y_end, x_start:x_end]
 
-            # Preprocess cell for the model
-            cell = cv2.resize(cell, (64, 64))  # Resize to model input size
+            # Save a few sample cells for debugging
+            if row < 2 and col < 2:
+                cv2.imwrite(f"debug_cell_{row}_{col}_original.jpg", cell)
 
-            # Convert to grayscale
-            cell_gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+            # Preprocess cell
+            cell_resized = cv2.resize(cell, (64, 64))
 
-            # Apply histogram equalization to improve contrast
-            cell_gray = cv2.equalizeHist(cell_gray)
+            # Try different preprocessing approaches
+            # Approach 1: RGB preprocessing
+            cell_rgb = cv2.cvtColor(cell_resized, cv2.COLOR_BGR2RGB)
+            cell_rgb_normalized = cell_rgb.astype(np.float32) / 255.0
+            cell_rgb_input = np.expand_dims(cell_rgb_normalized, axis=0)
 
-            # Normalize to [0, 1]
-            cell_gray = cell_gray.astype(np.float32) / 255.0
+            # Approach 2: Grayscale preprocessing
+            cell_gray = cv2.cvtColor(cell_resized, cv2.COLOR_BGR2GRAY)
+            cell_gray_normalized = cell_gray.astype(np.float32) / 255.0
+            cell_gray_input = np.expand_dims(
+                np.expand_dims(cell_gray_normalized, axis=-1), axis=0
+            )
 
-            # Reshape to match model's expected input shape
-            cell_input = np.expand_dims(cell_gray, axis=-1)  # Shape: (64, 64, 1)
-            cell_input = np.expand_dims(cell_input, axis=0)  # Shape: (1, 64, 64, 1)
-
-            # Classify the cell
-            prediction = model.predict(cell_input, verbose=0)
-            piece_label = np.argmax(prediction)
-            confidence = np.max(prediction)
-
-            # Only accept predictions with high confidence
-            if confidence < 0.6:  # Adjust threshold as needed
-                piece_label = 0  # Treat as empty square
-
-            # Debug: Print predictions for troubleshooting
-            if piece_label != 0 and piece_label != 5:
-                print(
-                    f"Cell ({row}, {col}): predicted {piece_label} with confidence {confidence:.3f}"
+            # Save preprocessed samples for debugging
+            if row < 2 and col < 2:
+                cv2.imwrite(
+                    f"debug_cell_{row}_{col}_processed_gray.jpg",
+                    (cell_gray_normalized * 255).astype(np.uint8),
+                )
+                cv2.imwrite(
+                    f"debug_cell_{row}_{col}_processed_rgb.jpg",
+                    (cell_rgb_normalized * 255).astype(np.uint8),
                 )
 
-            board_labels[row][col] = piece_label
+            # Try both preprocessing approaches
+            for approach, cell_input in [
+                ("RGB", cell_rgb_input),
+                ("Grayscale", cell_gray_input),
+            ]:
+                try:
+                    prediction = model.predict(cell_input, verbose=0)
+                    piece_label = np.argmax(prediction)
+                    confidence = np.max(prediction)
+
+                    # Debug output for first few cells
+                    if row < 2 and col < 2:
+                        print(f"Cell ({row}, {col}) - {approach}:")
+                        print(f"  Input shape: {cell_input.shape}")
+                        print(f"  Prediction: {prediction}")
+                        print(f"  Label: {piece_label}, Confidence: {confidence:.3f}")
+                        print(
+                            f"  Top 3 predictions: {np.argsort(prediction[0])[-3:][::-1]}"
+                        )
+
+                    # Use the approach that gives higher confidence
+                    if approach == "RGB" or (
+                        approach == "Grayscale" and confidence > 0.5
+                    ):
+                        board_labels[row][col] = piece_label if confidence > 0.3 else 0
+                        break
+
+                except Exception as e:
+                    print(f"Error predicting cell ({row}, {col}) with {approach}: {e}")
+                    board_labels[row][col] = 0
 
     return board_labels
 
@@ -332,6 +363,74 @@ def check_model_input_shape():
 
     # Call this function when your app starts up
     return input_shape
+
+
+def debug_model_info():
+    """Debug function to check model input/output specifications"""
+    print("Model input shape:", model.input_shape)
+    print("Model output shape:", model.output_shape)
+
+    # Test with a dummy input
+    if len(model.input_shape) == 4:  # (batch, height, width, channels)
+        dummy_shape = (
+            1,
+            model.input_shape[1],
+            model.input_shape[2],
+            model.input_shape[3],
+        )
+    else:
+        dummy_shape = model.input_shape
+
+    dummy_input = np.random.random(dummy_shape).astype(np.float32)
+    try:
+        dummy_output = model.predict(dummy_input, verbose=0)
+        print("Dummy prediction shape:", dummy_output.shape)
+        print("Dummy prediction:", dummy_output)
+        print(
+            "Number of classes:",
+            dummy_output.shape[-1] if len(dummy_output.shape) > 1 else 1,
+        )
+    except Exception as e:
+        print("Error with dummy prediction:", e)
+
+
+def process_chess_board(image):
+    start_time = time.time()
+
+    # Debug model info first
+    debug_model_info()
+
+    # Detect and warp the board
+    warped = detect_and_warp(image)
+    warp_time = time.time()
+
+    if warped is None:
+        print("Warning: detect_and_warp returned None. Using original image.")
+        warped = cv2.resize(image, (800, 800))
+
+    print(f"Time to warp: {warp_time - start_time:.2f} seconds")
+
+    # Save the warped image for debugging
+    cv2.imwrite("debug_warped_board.jpg", warped)
+
+    # Classify cells
+    try:
+        board_labels = classify_cells(warped)
+    except Exception as e:
+        print(f"Error in model classification: {e}")
+        print("Falling back to batch classification...")
+        board_labels = classify_cells_batch(warped)
+
+    classify_time = time.time()
+    print(f"Time to classify: {classify_time - warp_time:.2f} seconds")
+
+    print("Detected board before corrections:")
+    print(board_labels)
+
+    # Generate notation
+    fen, pgn = generate_notation(board_labels)
+
+    return fen, pgn
 
 
 # Add this line near the top of the file after model loading
